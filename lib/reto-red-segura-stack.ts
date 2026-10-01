@@ -1,6 +1,7 @@
 import * as cdk from 'aws-cdk-lib/core';
 import { Construct } from 'constructs';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
+import * as iam from 'aws-cdk-lib/aws-iam';
 
 export class RetoRedSeguraStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
@@ -70,6 +71,60 @@ export class RetoRedSeguraStack extends cdk.Stack {
       ec2.Port.tcp(3306),
       'MySQL solo desde la capa web',
     );
+
+    // ---------------------------------------------------------------------
+    // IAM Role para las instancias de prueba
+    // ---------------------------------------------------------------------
+    // Ambas instancias usan Session Manager (SSM) para pruebas sin abrir
+    // puerto 22. Nada mas.
+    const instanceRole = new iam.Role(this, 'InstanceRole', {
+      assumedBy: new iam.ServicePrincipal('ec2.amazonaws.com'),
+      description: 'Rol de instancias de prueba con acceso SSM',
+      managedPolicies: [
+        iam.ManagedPolicy.fromAwsManagedPolicyName('AmazonSSMManagedInstanceCore'),
+      ],
+    });
+
+    // ---------------------------------------------------------------------
+    // Instancia web (subnet publica)
+    // ---------------------------------------------------------------------
+    // Simula la capa web. Usa el SG web-sg.
+    const webInstance = new ec2.Instance(this, 'WebInstance', {
+      vpc,
+      vpcSubnets: { subnetType: ec2.SubnetType.PUBLIC },
+      instanceType: ec2.InstanceType.of(ec2.InstanceClass.T3, ec2.InstanceSize.MICRO),
+      machineImage: ec2.MachineImage.latestAmazonLinux2023(),
+      securityGroup: webSg,
+      role: instanceRole,
+    });
+
+    // ---------------------------------------------------------------------
+    // Instancia db (subnet privada)
+    // ---------------------------------------------------------------------
+    // Simula la capa de base de datos.
+    // No tiene IP publica y usa el SG db-sg.
+    // Debe poder salir a internet via NAT, pero no recibir trafico entrante.
+    const dbInstance = new ec2.Instance(this, 'DbInstance', {
+      vpc,
+      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
+      instanceType: ec2.InstanceType.of(ec2.InstanceClass.T3, ec2.InstanceSize.MICRO),
+      machineImage: ec2.MachineImage.latestAmazonLinux2023(),
+      securityGroup: dbSg,
+      role: instanceRole,
+    });
+
+    // ---------------------------------------------------------------------
+    // Outputs
+    // ---------------------------------------------------------------------
+    new cdk.CfnOutput(this, 'WebInstanceId', {
+      value: webInstance.instanceId,
+      description: 'Instance ID de la capa web (publica)',
+    });
+
+    new cdk.CfnOutput(this, 'DbInstanceId', {
+      value: dbInstance.instanceId,
+      description: 'Instance ID de la capa db (privada)',
+    });
 
   }
 }
