@@ -2,6 +2,7 @@ import * as cdk from 'aws-cdk-lib/core';
 import { Construct } from 'constructs';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as iam from 'aws-cdk-lib/aws-iam';
+import * as s3 from 'aws-cdk-lib/aws-s3';
 
 export class RetoRedSeguraStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
@@ -30,6 +31,66 @@ export class RetoRedSeguraStack extends cdk.Stack {
           cidrMask: 24,
         },
       ],
+    });
+
+    // ---------------------------------------------------------------------
+    // Bucket S3 para VPC Flow Logs
+    // ---------------------------------------------------------------------
+    // Almacena los registros de tráfico de la VPC para auditoria.
+    // Se elige S3 en lugar de CloudWatch Logs por costo.
+    // removalPolicy DESTROY + autoDeleteObjects para que cdk destroy lo
+    // elimine sin dejar residuos, pero solo para este laboratorio.
+    const flowLogsBucket = new s3.Bucket(this, 'FlowLogsBucket', {
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+      autoDeleteObjects: true,
+      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+      encryption: s3.BucketEncryption.S3_MANAGED,
+      lifecycleRules: [
+        {
+          expiration: cdk.Duration.days(7),
+          id: 'Expirar logs a los 7 dias',
+        },
+      ],
+    });
+
+     // ---------------------------------------------------------------------
+    // Bucket Policy para permitir a VPC Flow Logs escribir en el bucket
+    // ---------------------------------------------------------------------
+    // Sin esta policy, el Flow Log se crea pero nunca escribe nada
+    // (falla silenciosamente). Es un requisito no obvio de AWS.
+    flowLogsBucket.addToResourcePolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        principals: [new iam.ServicePrincipal('delivery.logs.amazonaws.com')],
+        actions: ['s3:PutObject'],
+        resources: [`${flowLogsBucket.bucketArn}/*`],
+        conditions: {
+          StringEquals: {
+            's3:x-amz-acl': 'bucket-owner-full-control',
+          },
+        },
+      }),
+    );
+
+    flowLogsBucket.addToResourcePolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        principals: [new iam.ServicePrincipal('delivery.logs.amazonaws.com')],
+        actions: ['s3:GetBucketAcl'],
+        resources: [flowLogsBucket.bucketArn],
+      }),
+    );
+
+    // ---------------------------------------------------------------------
+    // VPC Flow Log — auditoria de trafico
+    // ---------------------------------------------------------------------
+    // Registra ACEPTADOS y RECHAZADOS a nivel de VPC.
+    // Todo el trafico va al bucket S3 de arriba.
+    // Filtro ALL para auditar tanto conexiones permitidas como bloqueadas.
+    new ec2.FlowLog(this, 'VpcFlowLog', {
+      resourceType: ec2.FlowLogResourceType.fromVpc(vpc),
+      destination: ec2.FlowLogDestination.toS3(flowLogsBucket),
+      trafficType: ec2.FlowLogTrafficType.ALL,
     });
 
     // ---------------------------------------------------------------------
