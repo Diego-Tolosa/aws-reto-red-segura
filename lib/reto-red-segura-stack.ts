@@ -30,5 +30,46 @@ export class RetoRedSeguraStack extends cdk.Stack {
         },
       ],
     });
+
+    // ---------------------------------------------------------------------
+    // Security Group de la capa web (publica)
+    // ---------------------------------------------------------------------
+    // Recibe HTTP/HTTPS desde cualquier origen en internet.
+    // Es el unico SG con acceso directo desde 0.0.0.0/0.
+    const webSg = new ec2.SecurityGroup(this, 'WebSg', {
+      vpc,
+      description: 'Capa web: HTTP/HTTPS desde internet',
+      allowAllOutbound: true,
+    });
+
+    webSg.addIngressRule(
+      ec2.Peer.anyIpv4(),
+      ec2.Port.tcp(80),
+      'HTTP desde internet',
+    );
+
+    webSg.addIngressRule(
+      ec2.Peer.anyIpv4(),
+      ec2.Port.tcp(443),
+      'HTTPS desde internet',
+    );
+
+    // ---------------------------------------------------------------------
+    // Security Group de la capa de base de datos (privada)
+    // ---------------------------------------------------------------------
+    // NO tiene ninguna regla con origen 0.0.0.0/0.
+    // Solo acepta trafico proveniente del SG de la capa web.
+    const dbSg = new ec2.SecurityGroup(this, 'DbSg', {
+      vpc,
+      description: 'Capa DB: solo trafico desde la capa web',
+      allowAllOutbound: true,
+    });
+
+    dbSg.addIngressRule(
+      webSg,
+      ec2.Port.tcp(3306),
+      'MySQL solo desde la capa web',
+    );
+
   }
 }
